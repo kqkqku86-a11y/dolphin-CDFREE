@@ -1,0 +1,67 @@
+# Place this file at .github/workflows/android-build.yml in your repo.
+#
+# Builds the Android app located in Source/Android. The native component
+# is compiled via CMake, which the Gradle build triggers automatically —
+# no separate CMake step is needed here, as long as the NDK/CMake versions
+# declared in Source/Android/app/build.gradle can be auto-downloaded by
+# the Android Gradle Plugin (requires SDK licenses to be accepted, which
+# android-actions/setup-android handles below).
+
+name: Android Build
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'Source/Android/**'
+      - 'Source/Core/**'
+  pull_request:
+    paths:
+      - 'Source/Android/**'
+      - 'Source/Core/**'
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('Source/Android/**/*.gradle*') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Grant execute permission for gradlew
+        working-directory: Source/Android
+        run: chmod +x gradlew
+
+      - name: Build debug and release APKs
+        working-directory: Source/Android
+        run: ./gradlew assemble
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apks
+          path: Source/Android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
