@@ -36,7 +36,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "org.dolphinemu.dolphinemu"
+        applicationId = "git.kqkqku.dolphin_android.cdfree"
         minSdk = 24
         targetSdk = 37
 
@@ -94,7 +94,7 @@ android {
             version = "3.25.0+"
         }
     }
-    namespace = "org.dolphinemu.dolphinemu"
+    namespace = "git.kqkqku.dolphin_android.cdfree"
 
     defaultConfig {
         externalNativeBuild {
