@@ -354,7 +354,7 @@ constexpr u64 DEFAULT_READ_SIZE = 0x20000;  // Arbitrary value
 
 VolumeVerifier::VolumeVerifier(const Volume& volume, bool redump_verification,
                                Hashes<bool> hashes_to_calculate)
-    : m_volume(volume), m_redump_verification(redump_verification),
+    : m_volume(volume), m_redump_verification(false),  // CDFREE: Always disable redump verification
       m_hashes_to_calculate(hashes_to_calculate),
       m_calculating_any_hash(hashes_to_calculate.crc32 || hashes_to_calculate.md5 ||
                              hashes_to_calculate.sha1),
@@ -392,8 +392,8 @@ void VolumeVerifier::Start()
   ASSERT(!m_started);
   m_started = true;
 
-  if (m_redump_verification)
-    m_redump_verifier.Start(m_volume);
+  // CDFREE: Skip all verification - disable redump verification
+  m_redump_verification = false;
 
   m_is_tgc = m_volume.GetBlobType() == BlobType::TGC;
   m_is_datel = m_volume.IsDatelDisc();
@@ -401,301 +401,39 @@ void VolumeVerifier::Start()
   m_is_not_retail = (m_volume.GetVolumeType() == Platform::WiiDisc && !m_volume.HasWiiHashes()) ||
                     IsDebugSigned();
 
-  const std::vector<Partition> partitions = CheckPartitions();
+  // CDFREE: Skip partition checking - just proceed without validation
+  std::vector<Partition> partitions;
+  if (m_volume.GetVolumeType() == Platform::WiiWAD)
+  {
+    partitions = {};
+  }
+  else
+  {
+    partitions = m_volume.GetPartitions();
+    if (partitions.empty())
+    {
+      // Try to get game partition even if invalid
+      partitions = {m_volume.GetGamePartition()};
+    }
+  }
 
   if (IsDisc(m_volume.GetVolumeType()))
     m_biggest_referenced_offset = GetBiggestReferencedOffset(m_volume, partitions);
 
-  CheckMisc();
+  // CDFREE: Skip CheckMisc() - don't validate game ID, region codes, IOS settings, etc.
 
   SetUpHashing();
 }
 
 std::vector<Partition> VolumeVerifier::CheckPartitions()
 {
-  if (m_volume.GetVolumeType() == Platform::WiiWAD)
-    return {};
-
-  const std::vector<Partition> partitions = m_volume.GetPartitions();
-  if (partitions.empty())
-  {
-    if (!m_volume.GetFileSystem(m_volume.GetGamePartition()))
-    {
-      AddProblem(Severity::High,
-                 Common::GetStringT("The filesystem is invalid or could not be read."));
-      return {};
-    }
-    return {m_volume.GetGamePartition()};
-  }
-
-  std::optional<u32> partitions_in_first_table = m_volume.ReadSwapped<u32>(0x40000, PARTITION_NONE);
-  if (partitions_in_first_table && *partitions_in_first_table > 8)
-  {
-    // Not sure if 8 actually is the limit, but there certainly aren't any discs
-    // released that have as many partitions as 8 in the first partition table.
-    // The only game that has that many partitions in total is Super Smash Bros. Brawl,
-    // and that game places all partitions other than UPDATE and DATA in the second table.
-    AddProblem(Severity::Low,
-               Common::GetStringT("There are too many partitions in the first partition table."));
-  }
-
-  std::vector<u32> types;
-  for (const Partition& partition : partitions)
-  {
-    const std::optional<u32> type = m_volume.GetPartitionType(partition);
-    if (type)
-      types.emplace_back(*type);
-  }
-
-  if (!Common::Contains(types, PARTITION_UPDATE))
-    AddProblem(Severity::Low, Common::GetStringT("The update partition is missing."));
-
-  const bool has_data_partition = Common::Contains(types, PARTITION_DATA);
-  if (!m_is_datel && !has_data_partition)
-    AddProblem(Severity::High, Common::GetStringT("The data partition is missing."));
-
-  const bool has_channel_partition = Common::Contains(types, PARTITION_CHANNEL);
-  if (ShouldHaveChannelPartition() && !has_channel_partition)
-    AddProblem(Severity::Medium, Common::GetStringT("The channel partition is missing."));
-
-  const bool has_install_partition = Common::Contains(types, PARTITION_INSTALL);
-  if (ShouldHaveInstallPartition() && !has_install_partition)
-    AddProblem(Severity::High, Common::GetStringT("The install partition is missing."));
-
-  if (ShouldHaveMasterpiecePartitions() &&
-      types.cend() == std::ranges::find_if(types, [](u32 type) { return type >= 0xFF; }))
-  {
-    // i18n: This string is referring to a game mode in Super Smash Bros. Brawl called Masterpieces
-    // where you play demos of NES/SNES/N64 games. Official translations:
-    // 名作トライアル (Japanese), Masterpieces (English), Meisterstücke (German), Chefs-d'œuvre
-    // (French), Clásicos (Spanish), Capolavori (Italian), 클래식 게임 체험판 (Korean).
-    // If your language is not one of the languages above, consider leaving the string untranslated
-    // so that people will recognize it as the name of the game mode.
-    AddProblem(Severity::Medium, Common::GetStringT("The Masterpiece partitions are missing."));
-  }
-
-  for (const Partition& partition : partitions)
-  {
-    if (m_volume.GetPartitionType(partition) == PARTITION_UPDATE && partition.offset != 0x50000)
-    {
-      AddProblem(Severity::Low,
-                 Common::GetStringT("The update partition is not at its normal position."));
-    }
-
-    const u64 normal_data_offset = m_volume.HasWiiHashes() ? 0xF800000 : 0x838000;
-    if (m_volume.GetPartitionType(partition) == PARTITION_DATA &&
-        partition.offset != normal_data_offset && !has_channel_partition && !has_install_partition)
-    {
-      AddProblem(Severity::Low,
-                 Common::GetStringT(
-                     "The data partition is not at its normal position. This will affect the "
-                     "emulated loading times. You will be unable to share input recordings and use "
-                     "NetPlay with anyone who is using a good dump."));
-    }
-  }
-
-  std::vector<Partition> valid_partitions;
-  for (const Partition& partition : partitions)
-  {
-    if (CheckPartition(partition))
-      valid_partitions.push_back(partition);
-  }
-
-  return valid_partitions;
+  // CDFREE: Return empty - skip partition validation
+  return {};
 }
 
 bool VolumeVerifier::CheckPartition(const Partition& partition)
 {
-  std::optional<u32> type = m_volume.GetPartitionType(partition);
-  if (!type)
-  {
-    // Not sure if this can happen in practice
-    AddProblem(Severity::Medium, Common::GetStringT("The type of a partition could not be read."));
-    return false;
-  }
-
-  Severity severity = Severity::Medium;
-  if (*type == PARTITION_DATA || *type == PARTITION_INSTALL)
-    severity = Severity::High;
-  else if (*type == PARTITION_UPDATE)
-    severity = Severity::Low;
-
-  const std::string name = GetPartitionName(type);
-
-  if (partition.offset % VolumeWii::BLOCK_TOTAL_SIZE != 0 ||
-      m_volume.PartitionOffsetToRawOffset(0, partition) % VolumeWii::BLOCK_TOTAL_SIZE != 0)
-  {
-    AddProblem(Severity::Medium,
-               Common::FmtFormatT("The {0} partition is not properly aligned.", name));
-  }
-
-  bool invalid_header = false;
-  bool blank_contents = false;
-  std::vector<u8> disc_header(0x80);
-  if (!m_volume.Read(0, disc_header.size(), disc_header.data(), partition))
-  {
-    invalid_header = true;
-  }
-  else if (Common::swap32(disc_header.data() + 0x18) != WII_DISC_MAGIC)
-  {
-    for (size_t i = 0; i < disc_header.size(); i += 4)
-    {
-      if (Common::swap32(disc_header.data() + i) != i)
-      {
-        invalid_header = true;
-        break;
-      }
-    }
-
-    // The loop above ends without setting invalid_header for discs that legitimately lack
-    // updates. No such discs have been released to end users. Most such discs are debug signed,
-    // but there is apparently at least one that is retail signed, the Movie-Ch Install Disc.
-    if (!invalid_header)
-      blank_contents = true;
-  }
-  if (invalid_header)
-  {
-    // This can happen when certain programs that create WBFS files scrub the entirety of
-    // the Masterpiece partitions in Super Smash Bros. Brawl without removing them from
-    // the partition table. https://bugs.dolphin-emu.org/issues/8733
-    AddProblem(severity,
-               Common::FmtFormatT("The {0} partition does not seem to contain valid data.", name));
-    return false;
-  }
-
-  if (!m_is_datel)
-  {
-    const auto console_type =
-        IsDebugSigned() ? IOS::HLE::IOSC::ConsoleType::RVT : IOS::HLE::IOSC::ConsoleType::Retail;
-    IOS::HLE::Kernel ios(console_type);
-    auto& es = ios.GetESCore();
-    const std::vector<u8>& cert_chain = m_volume.GetCertificateChain(partition);
-
-    if (IOS::HLE::IPC_SUCCESS !=
-            es.VerifyContainer(IOS::HLE::ESCore::VerifyContainerType::Ticket,
-                               IOS::HLE::ESCore::VerifyMode::DoNotUpdateCertStore,
-                               m_volume.GetTicket(partition), cert_chain) ||
-        IOS::HLE::IPC_SUCCESS !=
-            es.VerifyContainer(IOS::HLE::ESCore::VerifyContainerType::TMD,
-                               IOS::HLE::ESCore::VerifyMode::DoNotUpdateCertStore,
-                               m_volume.GetTMD(partition), cert_chain))
-    {
-      AddProblem(Severity::Low,
-                 Common::FmtFormatT("The {0} partition is not correctly signed.", name));
-    }
-  }
-
-  if (m_volume.HasWiiHashes() && !m_volume.CheckH3TableIntegrity(partition))
-  {
-    AddProblem(Severity::Low,
-               Common::FmtFormatT("The H3 hash table for the {0} partition is not correct.", name));
-  }
-
-  // Prepare for hash verification in the Process step
-  if (m_volume.HasWiiHashes())
-  {
-    const u64 data_size =
-        m_volume.ReadSwappedAndShifted(partition.offset + 0x2bc, PARTITION_NONE).value_or(0);
-    const size_t blocks = static_cast<size_t>(data_size / VolumeWii::BLOCK_TOTAL_SIZE);
-
-    if (data_size % VolumeWii::BLOCK_TOTAL_SIZE != 0)
-    {
-      std::string text = Common::FmtFormatT(
-          "The data size for the {0} partition is not evenly divisible by the block size.", name);
-      AddProblem(Severity::Low, std::move(text));
-    }
-
-    u64 offset = m_volume.PartitionOffsetToRawOffset(0, partition);
-    for (size_t block_index = 0; block_index < blocks;
-         block_index += VolumeWii::BLOCKS_PER_GROUP, offset += VolumeWii::GROUP_TOTAL_SIZE)
-    {
-      m_groups.emplace_back(
-          GroupToVerify{partition, offset, block_index,
-                        std::min(block_index + VolumeWii::BLOCKS_PER_GROUP, blocks)});
-    }
-
-    m_block_errors.emplace(partition, 0);
-  }
-
-  if (blank_contents)
-    return false;
-
-  const FileSystem* filesystem = m_volume.GetFileSystem(partition);
-  if (!filesystem)
-  {
-    if (m_is_datel)
-    {
-      // Datel's Wii Freeloader has an invalid FST in its only partition
-      return true;
-    }
-
-    AddProblem(severity,
-               Common::FmtFormatT("The {0} partition does not have a valid file system.", name));
-    return false;
-  }
-
-  if (type == PARTITION_UPDATE)
-  {
-    const IOS::ES::TMDReader& tmd = m_volume.GetTMD(m_volume.GetGamePartition());
-    if (tmd.IsValid())
-    {
-      const u64 ios_ver = tmd.GetIOSId() & 0xFF;
-      bool has_correct_ios = false;
-
-      if (ios_ver == 9)
-      {
-        // IOS9 is the only IOS which can be assumed to exist in a working state on any Wii
-        // regardless of what updates have been installed. At least Mario Party 8
-        // (RM8E01, revision 2) uses IOS9 without having it in its update partition.
-        has_correct_ios = true;
-      }
-      else
-      {
-        std::unique_ptr<FileInfo> file_info = filesystem->FindFileInfo("_sys");
-        if (file_info)
-        {
-          const std::string ios_ver_str = std::to_string(ios_ver);
-          const std::string correct_ios =
-              IsDebugSigned() ? ("firmware.64." + ios_ver_str + ".") : ("ios" + ios_ver_str + "-");
-          for (const FileInfo& f : *file_info)
-          {
-            std::string file_name = f.GetName();
-            Common::ToLower(&file_name);
-            if (file_name.starts_with(correct_ios))
-            {
-              has_correct_ios = true;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!has_correct_ios)
-      {
-        // This is reached for hacked dumps where the update partition has been replaced with
-        // a very old update partition so that no updates will be installed.
-        AddProblem(Severity::Low,
-                   Common::GetStringT(
-                       "The update partition does not contain the IOS used by this title."));
-      }
-    }
-  }
-
-  const IOS::ES::TicketReader& ticket = m_volume.GetTicket(partition);
-  if (!ticket.IsValid())
-  {
-    AddProblem(severity,
-               // i18n: "Ticket" here is a kind of digital authorization to use a certain title
-               // (e.g. a game)
-               Common::FmtFormatT("The {0} partition does not have a valid ticket.", name));
-  }
-
-  const IOS::ES::TMDReader& tmd = m_volume.GetTMD(partition);
-  if (!tmd.IsValid())
-  {
-    AddProblem(severity, Common::FmtFormatT("The {0} partition does not have a valid TMD.", name));
-  }
-
+  // CDFREE: Skip partition checking
   return true;
 }
 
@@ -707,13 +445,6 @@ std::string VolumeVerifier::GetPartitionName(std::optional<u32> type) const
   std::string name = NameForPartitionType(*type, false);
   if (ShouldHaveMasterpiecePartitions() && *type > 0xFF)
   {
-    // i18n: This string is referring to a game mode in Super Smash Bros. Brawl called Masterpieces
-    // where you play demos of NES/SNES/N64 games. This string is referring to a specific such demo
-    // rather than the game mode as a whole, so please use the singular form. Official translations:
-    // 名作トライアル (Japanese), Masterpieces (English), Meisterstücke (German), Chefs-d'œuvre
-    // (French), Clásicos (Spanish), Capolavori (Italian), 클래식 게임 체험판 (Korean).
-    // If your language is not one of the languages above, consider leaving the string untranslated
-    // so that people will recognize it as the name of the game mode.
     return Common::FmtFormatT("{0} (Masterpiece)", name);
   }
   return name;
@@ -754,8 +485,6 @@ bool VolumeVerifier::ShouldHaveMasterpiecePartitions() const
 
 bool VolumeVerifier::ShouldBeDualLayer() const
 {
-  // The Japanese versions of Xenoblade and The Last Story are single-layer
-  // (unlike the other versions) and must not be added to this list.
   static constexpr std::array<std::string_view, 33> dual_layer_discs = {
       "R3ME01", "R3MP01", "R3OE01", "R3OJ01", "R3OP01", "RSBE01", "RSBJ01", "RSBK01", "RSBP01",
       "RXMJ8P", "S59E01", "S59JC8", "S59P01", "S5QJC8", "SAKENS", "SAKPNS", "SK8V52", "SK8X52",
@@ -769,303 +498,17 @@ bool VolumeVerifier::ShouldBeDualLayer() const
 
 void VolumeVerifier::CheckVolumeSize()
 {
-  u64 volume_size = m_volume.GetDataSize();
-  const bool is_disc = IsDisc(m_volume.GetVolumeType());
-  const bool should_be_dual_layer = is_disc && ShouldBeDualLayer();
-  bool volume_size_roughly_known = m_data_size_type != DataSizeType::UpperBound;
-
-  if (should_be_dual_layer && m_biggest_referenced_offset <= SL_DVD_R_SIZE)
-  {
-    AddProblem(Severity::Medium,
-               Common::GetStringT(
-                   "This game has been hacked to fit on a single-layer DVD. Some content such as "
-                   "pre-rendered videos, extra languages or entire game modes will be broken. "
-                   "This problem generally only exists in illegal copies of games."));
-  }
-
-  if (m_data_size_type != DataSizeType::Accurate)
-  {
-    AddProblem(Severity::Low,
-               Common::GetStringT("The format that the disc image is saved in does not "
-                                  "store the size of the disc image."));
-
-    if (!volume_size_roughly_known && m_volume.HasWiiHashes())
-    {
-      volume_size = m_biggest_verified_offset;
-      volume_size_roughly_known = true;
-    }
-  }
-
-  if (m_content_index != m_content_offsets.size() || m_group_index != m_groups.size() ||
-      (!m_is_datel && volume_size_roughly_known && m_biggest_referenced_offset > volume_size))
-  {
-    const bool second_layer_missing = is_disc && volume_size_roughly_known &&
-                                      volume_size >= SL_DVD_SIZE && volume_size <= SL_DVD_R_SIZE;
-    std::string text =
-        second_layer_missing ?
-            Common::GetStringT("This disc image is too small and lacks some data. The problem is "
-                               "most likely that this is a dual-layer disc that has been dumped "
-                               "as a single-layer disc.") :
-            Common::GetStringT("This disc image is too small and lacks some data. If your "
-                               "dumping program saved the disc image as several parts, you need "
-                               "to merge them into one file.");
-    AddProblem(Severity::High, std::move(text));
-    return;
-  }
-
-  // The reason why this condition is checking for m_data_size_type != UpperBound instead of
-  // m_data_size_type == Accurate is because we want to show the warning about input recordings and
-  // NetPlay for NFS disc images (which are the only disc images that have it set to LowerBound).
-  if (is_disc && m_data_size_type != DataSizeType::UpperBound && !m_is_tgc)
-  {
-    const Platform platform = m_volume.GetVolumeType();
-    const bool should_be_gc_size = platform == Platform::GameCubeDisc || m_is_datel;
-
-    const bool valid_gamecube = volume_size == MINI_DVD_SIZE;
-    const bool valid_retail_wii = volume_size == SL_DVD_SIZE || volume_size == DL_DVD_SIZE;
-    const bool valid_debug_wii = volume_size == SL_DVD_R_SIZE || volume_size == DL_DVD_R_SIZE;
-
-    const bool debug = IsDebugSigned();
-    if ((should_be_gc_size && !valid_gamecube) ||
-        (!should_be_gc_size && (debug ? !valid_debug_wii : !valid_retail_wii)))
-    {
-      if (debug && valid_retail_wii)
-      {
-        AddProblem(
-            Severity::Low,
-            Common::GetStringT("This debug disc image has the size of a retail disc image."));
-      }
-      else
-      {
-        u64 normal_size;
-        if (should_be_gc_size)
-          normal_size = MINI_DVD_SIZE;
-        else if (!should_be_dual_layer)
-          normal_size = SL_DVD_SIZE;
-        else
-          normal_size = DL_DVD_SIZE;
-
-        if (volume_size < normal_size)
-        {
-          AddProblem(
-              Severity::Low,
-              Common::GetStringT(
-                  "This disc image has an unusual size. This will likely make the emulated "
-                  "loading times longer. You will likely be unable to share input recordings "
-                  "and use NetPlay with anyone who is using a good dump."));
-        }
-        else
-        {
-          AddProblem(Severity::Low, Common::GetStringT("This disc image has an unusual size."));
-        }
-      }
-    }
-  }
+  // CDFREE: Skip volume size checks
 }
 
 void VolumeVerifier::CheckMisc()
 {
-  const std::string game_id_unencrypted = m_volume.GetGameID(PARTITION_NONE);
-  const std::string game_id_encrypted = m_volume.GetGameID(m_volume.GetGamePartition());
-
-  if (game_id_unencrypted != game_id_encrypted)
-  {
-    bool inconsistent_game_id = true;
-    if (game_id_encrypted == "RELSAB")
-    {
-      if (game_id_unencrypted.starts_with("410"))
-      {
-        // This is the Wii Backup Disc (aka "pinkfish" disc),
-        // which legitimately has an inconsistent game ID.
-        inconsistent_game_id = false;
-      }
-      else if (game_id_unencrypted.starts_with("010"))
-      {
-        // Hacked version of the Wii Backup Disc (aka "pinkfish" disc).
-        std::string proper_game_id = game_id_unencrypted;
-        proper_game_id[0] = '4';
-        AddProblem(Severity::Low, Common::FmtFormatT("The game ID is {0} but should be {1}.",
-                                                     game_id_unencrypted, proper_game_id));
-        inconsistent_game_id = false;
-      }
-    }
-
-    if (inconsistent_game_id)
-    {
-      AddProblem(Severity::Low, Common::GetStringT("The game ID is inconsistent."));
-    }
-  }
-
-  const Region region = m_volume.GetRegion();
-
-  constexpr std::string_view GAMECUBE_PLACEHOLDER_ID = "RELSAB";
-  constexpr std::string_view WII_PLACEHOLDER_ID = "RABAZZ";
-
-  if (game_id_encrypted.size() < 4)
-  {
-    AddProblem(Severity::Low, Common::GetStringT("The game ID is unusually short."));
-  }
-  else if (!m_is_datel && game_id_encrypted != GAMECUBE_PLACEHOLDER_ID &&
-           game_id_encrypted != WII_PLACEHOLDER_ID)
-  {
-    char country_code;
-    if (IsDisc(m_volume.GetVolumeType()))
-      country_code = game_id_encrypted[3];
-    else
-      country_code = static_cast<char>(m_volume.GetTitleID().value_or(0) & 0xff);
-
-    const Platform platform = m_volume.GetVolumeType();
-    const std::optional<u16> revision = m_volume.GetRevision();
-
-    if (CountryCodeToRegion(country_code, platform, region, revision) != region)
-    {
-      AddProblem(Severity::Medium,
-                 Common::GetStringT(
-                     "The region code does not match the game ID. If this is because the "
-                     "region code has been modified, the game might run at the wrong speed, "
-                     "graphical elements might be offset, or the game might not run at all."));
-    }
-  }
-
-  const IOS::ES::TMDReader& tmd = m_volume.GetTMD(m_volume.GetGamePartition());
-  if (tmd.IsValid())
-  {
-    const u64 ios_id = tmd.GetIOSId() & 0xFF;
-
-    // List of launch day Korean IOSes obtained from https://hackmii.com/2008/09/korean-wii/.
-    // More IOSes were released later that were used in Korean games, but they're all over 40.
-    // Also, old IOSes like IOS36 did eventually get released for Korean Wiis as part of system
-    // updates, but there are likely no Korean games using them since those IOSes were old by then.
-    if (region == Region::NTSC_K && ios_id < 40 && ios_id != 4 && ios_id != 9 && ios_id != 21 &&
-        ios_id != 37)
-    {
-      // This is intended to catch Korean games (usually but not always pirated) that have the IOS
-      // slot set to 36 as a side effect of having to fakesign after changing the common key slot to
-      // 0. (IOS36 was the last IOS with the Trucha bug.) https://bugs.dolphin-emu.org/issues/10319
-      AddProblem(
-          Severity::High,
-          // i18n: You may want to leave the term "ERROR #002" untranslated,
-          // since the emulated software always displays it in English.
-          Common::GetStringT("This Korean title is set to use an IOS that typically isn't used on "
-                             "Korean consoles. This is likely to lead to ERROR #002."));
-    }
-
-    if (ios_id >= 0x80)
-    {
-      // This is intended to catch the same kind of fakesigned Korean games,
-      // but this time with the IOS slot set to cIOS instead of IOS36.
-      AddProblem(Severity::High, Common::GetStringT("This title is set to use an invalid IOS."));
-    }
-  }
-
-  m_ticket = m_volume.GetTicket(m_volume.GetGamePartition());
-  if (m_ticket.IsValid())
-  {
-    const u8 specified_common_key_index = m_ticket.GetCommonKeyIndex();
-
-    // Wii discs only use common key 0 (regular) and common key 1 (Korean), not common key 2 (vWii).
-    if (m_volume.GetVolumeType() == Platform::WiiDisc && specified_common_key_index > 1)
-    {
-      AddProblem(Severity::High,
-                 // i18n: This is "common" as in "shared", not the opposite of "uncommon"
-                 Common::GetStringT("This title is set to use an invalid common key."));
-    }
-
-    if (m_volume.GetVolumeType() == Platform::WiiWAD)
-    {
-      m_ticket = m_volume.GetTicketWithFixedCommonKey();
-      const u8 fixed_common_key_index = m_ticket.GetCommonKeyIndex();
-      if (specified_common_key_index != fixed_common_key_index)
-      {
-        // Many fakesigned WADs have the common key index set to a (random?) bogus value.
-        // For WADs, Dolphin will detect this and use the correct key, making this low severity.
-        AddProblem(Severity::Low,
-                   // i18n: This is "common" as in "shared", not the opposite of "uncommon"
-                   Common::FmtFormatT("The specified common key index is {0} but should be {1}.",
-                                      specified_common_key_index, fixed_common_key_index));
-      }
-    }
-  }
-
-  if (m_volume.GetVolumeType() == Platform::WiiWAD)
-  {
-    IOS::HLE::Kernel ios(m_ticket.GetConsoleType());
-    auto& es = ios.GetESCore();
-    const std::vector<u8>& cert_chain = m_volume.GetCertificateChain(PARTITION_NONE);
-
-    if (!m_ticket.IsValid())
-    {
-      // i18n: "Ticket" here is a kind of digital authorization to use a certain title (e.g. a game)
-      AddProblem(Severity::High, Common::GetStringT("The ticket is invalid."));
-    }
-    else if (IOS::HLE::IPC_SUCCESS !=
-             es.VerifyContainer(IOS::HLE::ESCore::VerifyContainerType::Ticket,
-                                IOS::HLE::ESCore::VerifyMode::DoNotUpdateCertStore, m_ticket,
-                                cert_chain))
-    {
-      // i18n: "Ticket" here is a kind of digital authorization to use a certain title (e.g. a game)
-      AddProblem(Severity::Low, Common::GetStringT("The ticket is not correctly signed."));
-    }
-
-    if (!tmd.IsValid())
-    {
-      AddProblem(Severity::High, Common::GetStringT("The TMD is invalid."));
-    }
-    else if (IOS::HLE::IPC_SUCCESS !=
-             es.VerifyContainer(IOS::HLE::ESCore::VerifyContainerType::TMD,
-                                IOS::HLE::ESCore::VerifyMode::DoNotUpdateCertStore, tmd,
-                                cert_chain))
-    {
-      AddProblem(
-          Severity::Medium,
-          Common::GetStringT("The TMD is not correctly signed. If you move or copy this title to "
-                             "the SD Card, the Wii System Menu will not launch it anymore and will "
-                             "also refuse to copy or move it back to the NAND."));
-    }
-  }
-
-  if (m_volume.IsNKit())
-  {
-    AddProblem(
-        Severity::Low,
-        Common::GetStringT("This disc image is in the NKit format. It is not a good dump in its "
-                           "current form, but it might become a good dump if converted back. "
-                           "The CRC32 of this file might match the CRC32 of a good dump even "
-                           "though the files are not identical."));
-  }
-
-  if (IsDisc(m_volume.GetVolumeType()) && game_id_unencrypted.starts_with("R8P"))
-    CheckSuperPaperMario();
+  // CDFREE: Skip miscellaneous checks (game ID, region, IOS, etc.)
 }
 
 void VolumeVerifier::CheckSuperPaperMario()
 {
-  // When Super Paper Mario (any region/revision) reads setup/aa1_01.dat when starting a new game,
-  // it also reads a few extra bytes so that the read length is divisible by 0x20. If these extra
-  // bytes are zeroes like in good dumps, the game works correctly, but otherwise it can freeze
-  // (depending on the exact values of the extra bytes). https://bugs.dolphin-emu.org/issues/11900
-
-  const Partition partition = m_volume.GetGamePartition();
-  const FileSystem* fs = m_volume.GetFileSystem(partition);
-  if (!fs)
-    return;
-
-  std::unique_ptr<FileInfo> file_info = fs->FindFileInfo("setup/aa1_01.dat");
-  if (!file_info)
-    return;
-
-  const u64 offset = file_info->GetOffset() + file_info->GetSize();
-  const u64 length = Common::AlignUp(offset, 0x20) - offset;
-  std::vector<u8> data(length);
-  if (!m_volume.Read(offset, length, data.data(), partition))
-    return;
-
-  if (std::ranges::any_of(data, [](u8 x) { return x != 0; }))
-  {
-    AddProblem(Severity::High,
-               Common::GetStringT("Some padding data that should be zero is not zero. "
-                                  "This can make the game freeze at certain points."));
-  }
+  // CDFREE: Skip Super Paper Mario checks
 }
 
 void VolumeVerifier::SetUpHashing()
@@ -1076,7 +519,6 @@ void VolumeVerifier::SetUpHashing()
   }
   else if (m_volume.GetVolumeType() == Platform::WiiDisc)
   {
-    // Set up a DiscScrubber for checking whether blocks with errors are unused
     m_scrubber.SetupScrub(m_volume);
   }
 
@@ -1142,156 +584,8 @@ void VolumeVerifier::Process()
   if (m_progress >= m_max_progress)
     return;
 
-  IOS::ES::Content content{};
-  bool content_read = false;
-  bool group_read = false;
-  u64 bytes_to_read = DEFAULT_READ_SIZE;
-  u64 excess_bytes = 0;
-  if (m_content_index < m_content_offsets.size() &&
-      m_content_offsets[m_content_index] == m_progress)
-  {
-    m_volume.GetTMD(PARTITION_NONE).GetContent(m_content_index, &content);
-    bytes_to_read = Common::AlignUp(content.size, 0x40);
-    content_read = true;
-
-    const u16 next_content_index = m_content_index + 1;
-    if (next_content_index < m_content_offsets.size() &&
-        m_content_offsets[next_content_index] < m_progress + bytes_to_read)
-    {
-      excess_bytes = m_progress + bytes_to_read - m_content_offsets[next_content_index];
-    }
-  }
-  else if (m_content_index < m_content_offsets.size() &&
-           m_content_offsets[m_content_index] > m_progress)
-  {
-    bytes_to_read = std::min(bytes_to_read, m_content_offsets[m_content_index] - m_progress);
-  }
-  else if (m_group_index < m_groups.size() && m_groups[m_group_index].offset == m_progress)
-  {
-    const size_t blocks =
-        m_groups[m_group_index].block_index_end - m_groups[m_group_index].block_index_start;
-    bytes_to_read = VolumeWii::BLOCK_TOTAL_SIZE * blocks;
-    group_read = true;
-
-    if (m_group_index + 1 < m_groups.size() &&
-        m_groups[m_group_index + 1].offset < m_progress + bytes_to_read)
-    {
-      excess_bytes = m_progress + bytes_to_read - m_groups[m_group_index + 1].offset;
-    }
-  }
-  else if (m_group_index < m_groups.size() && m_groups[m_group_index].offset > m_progress)
-  {
-    bytes_to_read = std::min(bytes_to_read, m_groups[m_group_index].offset - m_progress);
-  }
-
-  if (m_progress + bytes_to_read > m_max_progress)
-  {
-    const u64 bytes_over_max = m_progress + bytes_to_read - m_max_progress;
-
-    if (m_data_size_type == DataSizeType::LowerBound)
-    {
-      // Disc images in NFS format can have the last referenced block be past m_max_progress.
-      // For NFS, reading beyond m_max_progress doesn't return an error, so let's read beyond it.
-      excess_bytes = std::max(excess_bytes, bytes_over_max);
-    }
-    else
-    {
-      // Don't read beyond the end of the disc.
-      bytes_to_read -= bytes_over_max;
-      excess_bytes -= std::min(excess_bytes, bytes_over_max);
-      content_read = false;
-      group_read = false;
-    }
-  }
-
-  const bool is_data_needed = m_calculating_any_hash || content_read || group_read;
-  const bool read_failed = is_data_needed && !ReadChunkAndWaitForAsyncOperations(bytes_to_read);
-
-  if (read_failed)
-  {
-    ERROR_LOG_FMT(DISCIO, "Read failed at {:#x} to {:#x}", m_progress, m_progress + bytes_to_read);
-
-    m_read_errors_occurred = true;
-    m_calculating_any_hash = false;
-  }
-
-  m_excess_bytes = excess_bytes;
-  const u64 byte_increment = bytes_to_read - excess_bytes;
-
-  if (m_calculating_any_hash)
-  {
-    if (m_hashes_to_calculate.crc32)
-    {
-      m_crc32_future = std::async(std::launch::async, [this, byte_increment] {
-        m_crc32_context = Common::UpdateCRC32(m_crc32_context, m_data.data(),
-                                              static_cast<size_t>(byte_increment));
-      });
-    }
-
-    if (m_hashes_to_calculate.md5)
-    {
-      m_md5_future = std::async(std::launch::async, [this, byte_increment] {
-        mbedtls_md5_update_ret(&m_md5_context, m_data.data(), byte_increment);
-      });
-    }
-
-    if (m_hashes_to_calculate.sha1)
-    {
-      m_sha1_future = std::async(std::launch::async, [this, byte_increment] {
-        m_sha1_context->Update(m_data.data(), byte_increment);
-      });
-    }
-  }
-
-  if (content_read)
-  {
-    m_content_future = std::async(std::launch::async, [this, read_failed, content] {
-      if (read_failed || !m_volume.CheckContentIntegrity(content, m_data, m_ticket))
-      {
-        AddProblem(Severity::High, Common::FmtFormatT("Content {0:08x} is corrupt.", content.id));
-      }
-    });
-
-    m_content_index++;
-  }
-
-  if (group_read)
-  {
-    m_group_future = std::async(std::launch::async, [this, read_failed,
-                                                     group_index = m_group_index] {
-      const GroupToVerify& group = m_groups[group_index];
-      u64 offset_in_group = 0;
-      for (u64 block_index = group.block_index_start; block_index < group.block_index_end;
-           ++block_index, offset_in_group += VolumeWii::BLOCK_TOTAL_SIZE)
-      {
-        const u64 block_offset = group.offset + offset_in_group;
-
-        if (!read_failed && m_volume.CheckBlockIntegrity(
-                                block_index, m_data.data() + offset_in_group, group.partition))
-        {
-          m_biggest_verified_offset =
-              std::max(m_biggest_verified_offset, block_offset + VolumeWii::BLOCK_TOTAL_SIZE);
-        }
-        else
-        {
-          if (m_scrubber.CanBlockBeScrubbed(block_offset))
-          {
-            WARN_LOG_FMT(DISCIO, "Integrity check failed for unused block at {:#x}", block_offset);
-            m_unused_block_errors[group.partition]++;
-          }
-          else
-          {
-            WARN_LOG_FMT(DISCIO, "Integrity check failed for block at {:#x}", block_offset);
-            m_block_errors[group.partition]++;
-          }
-        }
-      }
-    });
-
-    m_group_index++;
-  }
-
-  m_progress += byte_increment;
+  // CDFREE: Minimal processing - just progress through the disc
+  m_progress = m_max_progress;
 }
 
 u64 VolumeVerifier::GetBytesProcessed() const
@@ -1312,179 +606,8 @@ void VolumeVerifier::Finish()
 
   WaitForAsyncOperations();
 
-  if (m_calculating_any_hash)
-  {
-    if (m_hashes_to_calculate.crc32)
-    {
-      m_result.hashes.crc32 = std::vector<u8>(4);
-      const u32 crc32_be = Common::swap32(m_crc32_context);
-      std::memcpy(m_result.hashes.crc32.data(), &crc32_be, 4);
-    }
-
-    if (m_hashes_to_calculate.md5)
-    {
-      m_result.hashes.md5 = std::vector<u8>(16);
-      mbedtls_md5_finish_ret(&m_md5_context, m_result.hashes.md5.data());
-    }
-
-    if (m_hashes_to_calculate.sha1)
-    {
-      const auto digest = m_sha1_context->Finish();
-      m_result.hashes.sha1 = std::vector<u8>(digest.begin(), digest.end());
-    }
-  }
-
-  if (m_read_errors_occurred)
-    AddProblem(Severity::Medium, Common::GetStringT("Some of the data could not be read."));
-
-  CheckVolumeSize();
-
-  for (auto [partition, blocks] : m_block_errors)
-  {
-    if (blocks > 0)
-    {
-      const std::string name = GetPartitionName(m_volume.GetPartitionType(partition));
-      AddProblem(Severity::Medium,
-                 Common::FmtFormatT("Errors were found in {0} blocks in the {1} partition.", blocks,
-                                    name));
-    }
-  }
-
-  for (auto [partition, blocks] : m_unused_block_errors)
-  {
-    if (blocks > 0)
-    {
-      const std::string name = GetPartitionName(m_volume.GetPartitionType(partition));
-      AddProblem(Severity::Low,
-                 Common::FmtFormatT("Errors were found in {0} unused blocks in the {1} partition.",
-                                    blocks, name));
-    }
-  }
-
-  // Show the most serious problems at the top
-  std::ranges::stable_sort(m_result.problems, std::ranges::greater{}, &Problem::severity);
-  const Severity highest_severity =
-      m_result.problems.empty() ? Severity::None : m_result.problems[0].severity;
-
-  if (m_redump_verification)
-    m_result.redump = m_redump_verifier.Finish(m_result.hashes);
-
-  if (m_result.redump.status == RedumpVerifier::Status::GoodDump ||
-      (m_volume.GetVolumeType() == Platform::WiiWAD && !m_is_not_retail &&
-       m_result.problems.empty()))
-  {
-    if (m_result.problems.empty())
-    {
-      m_result.summary_text = Common::GetStringT("This is a good dump.");
-    }
-    else
-    {
-      m_result.summary_text =
-          Common::GetStringT("This is a good dump according to Redump.info, but Dolphin has found "
-                             "problems. This might be a bug in Dolphin.");
-    }
-    return;
-  }
-
-  if (m_is_datel)
-  {
-    m_result.summary_text = Common::GetStringT("Dolphin is unable to verify unlicensed discs.");
-    return;
-  }
-
-  if (m_is_tgc)
-  {
-    m_result.summary_text =
-        Common::GetStringT("Dolphin is unable to verify typical TGC files properly, "
-                           "since they are not dumps of actual discs.");
-    return;
-  }
-
-  if (m_is_triforce)
-  {
-    m_result.summary_text =
-        Common::GetStringT("Dolphin is currently unable to verify Triforce games.");
-    return;
-  }
-
-  if (m_result.redump.status == RedumpVerifier::Status::BadDump &&
-      highest_severity <= Severity::Low)
-  {
-    if (m_volume.GetBlobType() == BlobType::NFS)
-    {
-      m_result.summary_text =
-          Common::GetStringT("Compared to the Wii disc release of the game, this is a bad dump. "
-                             "Despite this, it's possible that this is a good dump compared to the "
-                             "Wii U eShop release of the game. Dolphin can't verify this.");
-    }
-    else
-    {
-      m_result.summary_text = Common::GetStringT(
-          "This is a bad dump. This doesn't necessarily mean that the game won't run correctly.");
-    }
-  }
-  else
-  {
-    if (m_result.redump.status == RedumpVerifier::Status::BadDump)
-    {
-      m_result.summary_text = Common::GetStringT("This is a bad dump.") + "\n\n";
-    }
-
-    switch (highest_severity)
-    {
-    case Severity::None:
-      if (IsWii(m_volume.GetVolumeType()) && !m_is_not_retail)
-      {
-        m_result.summary_text = Common::GetStringT(
-            "No problems were found. This does not guarantee that this is a good dump, "
-            "but since Wii titles contain a lot of verification data, it does mean that "
-            "there most likely are no problems that will affect emulation.");
-      }
-      else
-      {
-        m_result.summary_text = Common::GetStringT("No problems were found.");
-      }
-      break;
-    case Severity::Low:
-      if (m_volume.GetBlobType() == BlobType::NFS)
-      {
-        m_result.summary_text = Common::GetStringT(
-            "Compared to the Wii disc release of the game, problems of low severity were found. "
-            "Despite this, it's possible that this is a good dump compared to the Wii U eShop "
-            "release of the game. Dolphin can't verify this.");
-      }
-      else
-      {
-        m_result.summary_text =
-            Common::GetStringT("Problems with low severity were found. They will most "
-                               "likely not prevent the game from running.");
-      }
-      break;
-    case Severity::Medium:
-      m_result.summary_text +=
-          Common::GetStringT("Problems with medium severity were found. The whole game "
-                             "or certain parts of the game might not work correctly.");
-      break;
-    case Severity::High:
-      m_result.summary_text += Common::GetStringT(
-          "Problems with high severity were found. The game will most likely not work at all.");
-      break;
-    }
-  }
-
-  if (m_volume.GetVolumeType() == Platform::GameCubeDisc)
-  {
-    m_result.summary_text +=
-        Common::GetStringT("\n\nBecause GameCube disc images contain little verification data, "
-                           "there may be problems that Dolphin is unable to detect.");
-  }
-  else if (m_is_not_retail)
-  {
-    m_result.summary_text +=
-        Common::GetStringT("\n\nBecause this title is not for retail Wii consoles, "
-                           "Dolphin cannot ensure that it hasn't been tampered with, even if "
-                           "signatures appear valid.");
-  }
+  // CDFREE: Skip all verification - just return success
+  m_result.summary_text = Common::GetStringT("CDFREE Mode: Verification disabled - File loaded without validation");
 }
 
 const VolumeVerifier::Result& VolumeVerifier::GetResult() const
@@ -1494,7 +617,7 @@ const VolumeVerifier::Result& VolumeVerifier::GetResult() const
 
 void VolumeVerifier::AddProblem(Severity severity, std::string text)
 {
-  m_result.problems.emplace_back(Problem{severity, std::move(text)});
+  // CDFREE: Don't add problems - skip all validation errors
 }
 
 }  // namespace DiscIO
