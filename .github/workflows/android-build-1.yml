@@ -60,14 +60,20 @@ jobs:
           cd Source/Android
           keytool -genkey -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass dolphin_release -keypass dolphin_release -dname "CN=DolphinEmu,O=DolphinEmu,L=Internet,ST=Internet,C=US"
 
-      - name: Ganti Package Name di File Kotlin Otomatis
+      - name: Ganti Package Name Secara Aman
         run: |
-          # Ganti "com.username.aplikasibaru" di bawah ini dengan nama package baru Anda!
-          NEW_PACKAGE="git.kqkqku.dolphin_android.cdfree"
+          # 1. Definisikan package lama dan baru
+          OLD_PKG="org.dolphinemu.dolphinemu"
+          NEW_PKG="git.kqkqku.dolphin_android.cdfree"
           
-          echo "Mengganti import lama ke package baru: $NEW_PACKAGE"
-          find Source/Android/app/src -type f \( -name "*.kt" -o -name "*.java" \) -exec sed -i "s/org.dolphinemu.dolphinemu/$NEW_PACKAGE/g" {} +
-
+          echo "Mengganti import R dan BuildConfig ke package baru..."
+          
+          # 2. Hanya ganti import R dan BuildConfig di file Kotlin dan Java
+          find Source/Android/app/src -type f \( -name "*.kt" -o -name "*.java" \) -exec sed -i "s/import $OLD_PKG.R/import $NEW_PKG.R/g" {} +
+          find Source/Android/app/src -type f \( -name "*.kt" -o -name "*.java" \) -exec sed -i "s/import $OLD_PKG.BuildConfig/import $NEW_PKG.BuildConfig/g" {} +
+          
+          echo "Proses penggantian selesai dengan aman!"
+          
       - name: Build debug and release APKs
         working-directory: Source/Android
         run: |
