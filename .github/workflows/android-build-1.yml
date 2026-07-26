@@ -55,9 +55,18 @@ jobs:
         working-directory: Source/Android
         run: chmod +x gradlew
 
+      - name: Generate Keystore
+        run: |
+          keytool -genkey -v -keystore release.keystore -keyalias release -keyalg RSA -keysize 2048 -validity 10000 -storepass dolphin_release -keypass dolphin_release -dname "CN=DolphinEmu,O=DolphinEmu,L=Internet,ST=Internet,C=US"
+
       - name: Build debug and release APKs
         working-directory: Source/Android
-        run: ./gradlew assemble
+        run: |
+          ./gradlew assemble \
+            -Pkeystore=../release.keystore \
+            -Pstorepass=dolphin_release \
+            -Pkeyalias=release \
+            -Pkeypass=dolphin_release
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
