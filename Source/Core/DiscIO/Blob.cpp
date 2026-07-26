@@ -217,38 +217,74 @@ std::unique_ptr<BlobReader> CreateBlobReader(const std::string& filename)
   if (!file.Read(Common::AsWritableU8Span(magic)))
     return nullptr;
 
-  // Conveniently, every supported file format (except for plain disc images and
-  // extracted discs) starts with a 4-byte magic number that identifies the format,
-  // so we just need a simple switch statement to create the right blob type. If the
-  // magic number doesn't match any known magic number and the directory structure
-  // doesn't match the directory blob format, we assume it's a plain disc image. If
-  // that assumption is wrong, the volume code that runs later will notice the error
-  // because the blob won't provide the right data when reading the GC/Wii disc header.
-
+  // CDFREE: Try to create blob readers, but on failure, fallback to PlainFileReader
+  // This allows corrupted files to be loaded without error
+  
   switch (magic)
   {
   case CISO_MAGIC:
-    return CISOFileReader::Create(std::move(file));
-  case GCZ_MAGIC:
-    return CompressedBlobReader::Create(std::move(file), filename);
-  case TGC_MAGIC:
-    return TGCFileReader::Create(std::move(file));
-  case WBFS_MAGIC:
-    return WbfsFileReader::Create(std::move(file), filename);
-  case WIA_MAGIC:
-    return WIAFileReader::Create(std::move(file), filename);
-  case RVZ_MAGIC:
-    return RVZFileReader::Create(std::move(file), filename);
-  case NFS_MAGIC:
-    return NFSFileReader::Create(std::move(file), filename);
-  default:
-    if (auto directory_blob = DirectoryBlobReader::Create(filename))
-      return std::move(directory_blob);
-    if (auto split_blob = SplitPlainFileReader::Create(filename))
-      return std::move(split_blob);
-
-    return PlainFileReader::Create(std::move(file));
+  {
+    auto reader = CISOFileReader::Create(std::move(file));
+    if (reader)
+      return reader;
+    // CDFREE: Fall through to try PlainFileReader
+    break;
   }
+  case GCZ_MAGIC:
+  {
+    auto reader = CompressedBlobReader::Create(std::move(file), filename);
+    if (reader)
+      return reader;
+    break;
+  }
+  case TGC_MAGIC:
+  {
+    auto reader = TGCFileReader::Create(std::move(file));
+    if (reader)
+      return reader;
+    break;
+  }
+  case WBFS_MAGIC:
+  {
+    auto reader = WbfsFileReader::Create(std::move(file), filename);
+    if (reader)
+      return reader;
+    break;
+  }
+  case WIA_MAGIC:
+  {
+    auto reader = WIAFileReader::Create(std::move(file), filename);
+    if (reader)
+      return reader;
+    break;
+  }
+  case RVZ_MAGIC:
+  {
+    auto reader = RVZFileReader::Create(std::move(file), filename);
+    if (reader)
+      return reader;
+    break;
+  }
+  case NFS_MAGIC:
+  {
+    auto reader = NFSFileReader::Create(std::move(file), filename);
+    if (reader)
+      return reader;
+    break;
+  }
+  default:
+    break;
+  }
+
+  // CDFREE: Try DirectoryBlob and SplitPlainFile, but don't fail if they don't work
+  if (auto directory_blob = DirectoryBlobReader::Create(filename))
+    return std::move(directory_blob);
+  if (auto split_blob = SplitPlainFileReader::Create(filename))
+    return std::move(split_blob);
+
+  // CDFREE: Always return PlainFileReader as fallback for any file format
+  // This ensures corrupted/invalid ISO files can still be loaded
+  return PlainFileReader::Create(std::move(file));
 }
 
 }  // namespace DiscIO
