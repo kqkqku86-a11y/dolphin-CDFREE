@@ -57,7 +57,7 @@ jobs:
 
       - name: Generate Keystore
         run: |
-          keytool -genkey -v -keystore release.keystore -keyalias release -keyalg RSA -keysize 2048 -validity 10000 -storepass dolphin_release -keypass dolphin_release -dname "CN=DolphinEmu,O=DolphinEmu,L=Internet,ST=Internet,C=US"
+          keytool -genkey -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass dolphin_release -keypass dolphin_release -dname "CN=DolphinEmu,O=DolphinEmu,L=Internet,ST=Internet,C=US"
 
       - name: Build debug and release APKs
         working-directory: Source/Android
