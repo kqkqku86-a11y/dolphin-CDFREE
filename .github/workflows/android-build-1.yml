@@ -30,6 +30,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          clean: true
           submodules: recursive
 
       - name: Set up JDK 17
@@ -60,19 +61,21 @@ jobs:
           cd Source/Android
           keytool -genkey -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass dolphin_release -keypass dolphin_release -dname "CN=DolphinEmu,O=DolphinEmu,L=Internet,ST=Internet,C=US"
 
-      - name: Ganti Package Name Secara Aman
+      - name: Ganti Package Name dan Databinding Secara Aman
         run: |
-          # 1. Definisikan package lama dan baru
           OLD_PKG="org.dolphinemu.dolphinemu"
           NEW_PKG="git.kqkqku.dolphin_android.cdfree"
           
-          echo "Mengganti import R dan BuildConfig ke package baru..."
+          echo "Mengganti import R, BuildConfig, dan Databinding ke package baru..."
           
-          # 2. Hanya ganti import R dan BuildConfig di file Kotlin dan Java
+          # 1. Ganti import R dan BuildConfig standar
           find Source/Android/app/src -type f \( -name "*.kt" -o -name "*.java" \) -exec sed -i "s/import $OLD_PKG.R/import $NEW_PKG.R/g" {} +
           find Source/Android/app/src -type f \( -name "*.kt" -o -name "*.java" \) -exec sed -i "s/import $OLD_PKG.BuildConfig/import $NEW_PKG.BuildConfig/g" {} +
           
-          echo "Proses penggantian selesai dengan aman!"
+          # 2. Ganti import khusus untuk ViewBinding / DataBinding yang error
+          find Source/Android/app/src -type f \( -name "*.kt" -o -name "*.java" \) -exec sed -i "s/import $OLD_PKG.databinding/import $NEW_PKG.databinding/g" {} +
+          
+          echo "Proses penggantian selesai!"
           
       - name: Build debug and release APKs
         working-directory: Source/Android
